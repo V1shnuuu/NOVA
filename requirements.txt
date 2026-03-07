@@ -1,0 +1,8 @@
+pygetwindow==0.0.9
+pyautogui==0.9.54
+keyboard==0.13.5
+psutil==5.9.8
+spotipy==2.23.0
+colorlog==6.8.2
+bleak==0.21.1
+pywin32==306
