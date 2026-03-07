@@ -1,265 +1,390 @@
 """
-JARVIS WorkMode v2 — Main Orchestrator
-══════════════════════════════════════
-Production entry point: setup wizard → tray icon → event-driven automation.
+JARVIS WorkMode v3 — Main Orchestrator
+═══════════════════════════════════════
+Voice-first HUD system. Wires all components together.
 
-Usage:
-    python main.py          (as Administrator for global hotkeys)
-    pythonw.exe main.py     (silent — no console window)
+Boot sequence → wake word → command → mode selection →
+briefing cinematic → activation/deactivation → HUD event loop.
 """
 
 from __future__ import annotations
 
 import ctypes
-import subprocess
 import sys
 import threading
 import time
+import winsound
+from datetime import datetime
 
 from version import __version__, __app_name__
 from config import Config
 from app_state import AppState, WorkmodeState
-from ui.tray_icon import TrayIcon
-from ui.wizard import SetupWizard
-from ui.notification import NotificationService
-from triggers.wifi_presence import WiFiPresenceDetector
-from triggers.manual_trigger import ManualTrigger
-from automation.workspace_launcher import WorkspaceLauncher
-from automation.window_manager import WindowManager
-from automation.spotify_controller import SpotifyController
-from services.updater import AutoUpdater
+
+from voice.speaker import JarvisSpeaker
+from voice.recognizer import CommandRecognizer
+from voice.wake_word import WakeWordDetector
+from voice.command_parser import parse_command, Command
+from voice.responses import RESPONSES, briefing, get_greeting
+from voice.chime import ensure_chime
+
+from hud.hud_window import HUDWindow
+from hud.briefing_screen import BriefingScreen
+from hud.voice_ring import VoiceRing
+
+from modes.mode_controller import ModeController
+
+from workspace.launcher import WorkspaceLauncher
+from workspace.window_arranger import WindowArranger
+from workspace.deactivator import WorkspaceDeactivator
+
+from presence.wifi_monitor import WiFiMonitor
+from presence.absence_detector import AbsenceDetector
+
 from services.startup_manager import StartupManager
-from services.watchdog import Watchdog
+from services.updater import AutoUpdater
+
 from utils.logger import get_logger
-from utils.helpers import is_admin, ensure_single_instance, get_running_processes, get_all_window_titles
+from utils.helpers import is_admin, ensure_single_instance
 
 logger = get_logger("jarvis.main")
 
 
-class JarvisWorkMode:
-    """Top-level orchestrator wiring triggers → automation → UI."""
+class JarvisV3:
+    """Top-level orchestrator for the v3 Voice-First HUD System."""
 
     def __init__(self) -> None:
         self.config = Config.load()
         self.state = AppState()
 
-        # ── Automation ───────────────────────────────────────────────
+        # Voice
+        self.speaker = JarvisSpeaker(self.config)
+        self.recognizer = CommandRecognizer()
+        self.wake_detector = WakeWordDetector(
+            on_wake=self._on_wake_word,
+            wake_word=self.config.wake_word,
+        )
+
+        # HUD
+        self.hud = HUDWindow(self.config, self.state)
+        self.voice_ring = VoiceRing()
+
+        # Modes
+        self.mode_ctrl = ModeController(self.config)
+
+        # Workspace
         self.launcher = WorkspaceLauncher(self.config)
-        self.window_mgr = WindowManager(self.config)
-        self.spotify = SpotifyController(self.config)
+        self.arranger = WindowArranger(self.config)
+        self.deactivator = WorkspaceDeactivator()
 
-        # ── Services ─────────────────────────────────────────────────
-        self.notifier = NotificationService(self.config)
-        self.updater = AutoUpdater()
+        # Presence
+        self.wifi_monitor = WiFiMonitor(
+            self.config, self.state,
+            on_present=self._on_presence_detected,
+        )
+        self.absence_det = AbsenceDetector(
+            self.config, self.wifi_monitor, self.state,
+            on_absent=self._on_absence_detected,
+        )
+
+        # Services
         self.startup_mgr = StartupManager()
-        self.watchdog = Watchdog(self.state)
+        self.updater = AutoUpdater()
 
-        # ── Triggers ─────────────────────────────────────────────────
-        self.wifi_detector = WiFiPresenceDetector(
-            self.config, self.state, self._on_triggered,
-        )
-        self.manual_trigger = ManualTrigger(
-            self.config.hotkey,
-            lambda: self._on_triggered("hotkey"),
-        )
+        # Chime
+        self._chime_path = ensure_chime()
 
-        # Optional Bluetooth
-        self._bt_detector = None
-        if self.config.detection_method == "bluetooth":
-            try:
-                from triggers.bluetooth_presence import BluetoothPresenceDetector
-                self._bt_detector = BluetoothPresenceDetector(
-                    self.config, self.state, self._on_triggered,
-                )
-            except ImportError:
-                logger.warning("Bluetooth trigger unavailable.")
+    # ─────────────────────────────────────────────
+    # STARTUP
+    # ─────────────────────────────────────────────
 
-        # ── Tray (created last — references self) ────────────────────
-        self.tray = TrayIcon(self.config, self.state, self)
+    def start(self) -> None:
+        logger.info(f"{'=' * 50}")
+        logger.info(f" {__app_name__} v{__version__} — Voice-First HUD")
+        logger.info(f"{'=' * 50}")
 
-    # ── Event handling ───────────────────────────────────────────────
+        if not ensure_single_instance():
+            logger.error("Another instance running. Exiting.")
+            sys.exit(1)
 
-    def _on_triggered(self, source: str = "unknown") -> None:
-        """Callback invoked by any trigger source."""
-        if not self.state.can_activate(self.config.activation_cooldown_minutes):
-            logger.info(
-                f"Trigger [{source}] skipped — state: {self.state.state.name}"
+        if not is_admin():
+            logger.warning("Not Administrator — global hotkeys may fail.")
+
+        # First-run setup
+        if not self.config.setup_complete:
+            logger.info("First run — launching setup wizard…")
+            from ui.wizard import SetupWizard
+            wizard = SetupWizard(
+                self.config, on_complete=lambda: None,
             )
+            if not wizard.run():
+                logger.info("Wizard cancelled. Exiting.")
+                sys.exit(0)
+            self.config = Config.load()
+
+        # Startup registration
+        if self.config.launch_on_startup:
+            self.startup_mgr.enable()
+
+        # Boot sequence — runs BEFORE HUD mainloop
+        threading.Thread(
+            target=self._boot_sequence, daemon=True,
+        ).start()
+
+        # Start background services
+        self.wake_detector.start()
+        self.wifi_monitor.start()
+        self.absence_det.start()
+
+        # Manual hotkey
+        try:
+            import keyboard
+            keyboard.add_hotkey(
+                self.config.hotkey,
+                lambda: self._on_wake_word(),
+            )
+            logger.info(f"Hotkey registered: {self.config.hotkey}")
+        except Exception as exc:
+            logger.warning(f"Hotkey failed: {exc}")
+
+        self.state.state = WorkmodeState.IDLE
+        logger.info("JARVIS v3 online. HUD visible. Listening for wake word.")
+
+        # Blocking — HUD event loop on main thread
+        self.hud.run()
+
+        # Shutdown
+        logger.info("Shutting down…")
+        self.wake_detector.stop()
+        self.wifi_monitor.stop()
+        self.absence_det.stop()
+        logger.info("Goodbye! 👋")
+
+    def _boot_sequence(self) -> None:
+        """Typewriter boot lines on the HUD + greeting speech."""
+        time.sleep(0.5)  # Let HUD initialize
+        boot_lines = [
+            "SYSTEM BOOT SEQUENCE INITIATED",
+            "VOICE ENGINE..........ONLINE",
+            "PRESENCE MONITOR......ONLINE",
+            "HUD RENDERER..........ONLINE",
+            "ALL SYSTEMS NOMINAL",
+        ]
+        for line in boot_lines:
+            self.hud.set_speech_text(line)
+            time.sleep(0.6)
+
+        greeting = get_greeting()
+        self.hud.set_speech_text(greeting)
+        self.speaker.speak(greeting)
+
+    # ─────────────────────────────────────────────
+    # VOICE INTERACTION
+    # ─────────────────────────────────────────────
+
+    def _on_wake_word(self) -> None:
+        if self.state.state == WorkmodeState.LISTENING:
             return
 
-        logger.info(f"🚀 Activation triggered by [{source}]")
-        self.state.state = WorkmodeState.ACTIVATING
-        self.state.activation_source = source
-        self.state.last_activation_time = time.time()
-        self.tray.update_icon(WorkmodeState.ACTIVATING)
-        self.notifier.notify_phone_detected()
+        self.state.state = WorkmodeState.LISTENING
+        self.state.is_listening = True
 
+        # Chime + ring
+        self._play_chime()
+        self.voice_ring.show(duration=self.config.voice_command_timeout)
+        self.speaker.speak(RESPONSES["wake"], blocking=True)
+
+        # Listen in background
         threading.Thread(
-            target=self.activate, args=(source,),
+            target=self._process_voice_command, daemon=True,
+        ).start()
+
+    def _process_voice_command(self) -> None:
+        raw_text = self.recognizer.listen_for_command(
+            duration_seconds=self.config.voice_command_timeout,
+        )
+        self.state.is_listening = False
+        self.state.state = WorkmodeState.IDLE
+
+        logger.info(f"Voice: '{raw_text}'")
+        self.hud.set_speech_text(f"Heard: {raw_text}" if raw_text else "…")
+
+        if not raw_text:
+            self.speaker.speak(RESPONSES["cmd_unknown"])
+            return
+
+        command = parse_command(raw_text)
+        self._execute_command(command)
+
+    def _execute_command(self, cmd: Command) -> None:
+        handlers = {
+            Command.ACTIVATE:     lambda: self._activate_workspace("voice"),
+            Command.DEACTIVATE:   lambda: self._deactivate_workspace("voice"),
+            Command.PAUSE:        self._pause,
+            Command.RESUME:       self._resume,
+            Command.STATUS:       self._report_status,
+            Command.VOLUME_UP:    lambda: self.speaker.speak(RESPONSES["cmd_volume_up"]),
+            Command.VOLUME_DOWN:  lambda: self.speaker.speak(RESPONSES["cmd_volume_down"]),
+            Command.OPEN_SPOTIFY: lambda: self.speaker.speak(RESPONSES["cmd_spotify"]),
+            Command.CLOSE_ALL:    lambda: self._deactivate_workspace("voice"),
+            Command.UNKNOWN:      lambda: self.speaker.speak(RESPONSES["cmd_unknown"]),
+        }
+        handler = handlers.get(cmd, handlers[Command.UNKNOWN])
+        handler()
+
+    # ─────────────────────────────────────────────
+    # ACTIVATION
+    # ─────────────────────────────────────────────
+
+    def _on_presence_detected(self) -> None:
+        if self.state.can_activate(self.config.activation_cooldown_minutes):
+            self._activate_workspace("presence")
+
+    def _activate_workspace(self, source: str = "voice") -> None:
+        if not self.state.can_activate(self.config.activation_cooldown_minutes):
+            self.speaker.speak(RESPONSES["already_active"])
+            return
+
+        self.state.state = WorkmodeState.ACTIVATING
+        threading.Thread(
+            target=self._run_activation, args=(source,),
             daemon=True, name="ActivationThread",
         ).start()
 
-    def activate(self, source: str = "manual") -> None:
-        """Run the full workspace activation sequence."""
-        try:
-            logger.info("Step 1/3 — Launching applications…")
-            results = self.launcher.launch_all()
-            for r in results:
-                icon = "✅" if r.success else "❌"
-                logger.info(f"  {icon} {r.app}: {r.message}")
+    def _run_activation(self, source: str) -> None:
+        mode = self.mode_ctrl.get_current_mode()
+        self.state.current_mode_name = mode.name
 
-            logger.info("Step 2/3 — Arranging windows…")
-            self.window_mgr.arrange_workspace()
+        # Briefing
+        time_str = datetime.now().strftime("%I:%M %p")
+        brief = briefing(mode.name, time_str)
+        self.hud.set_speech_text(brief)
+        self.speaker.speak(brief)
 
-            if self.config.spotify_enabled:
-                logger.info("Step 3/3 — Starting Spotify playback…")
-                self.spotify.start_playlist()
-            else:
-                logger.info("Step 3/3 — Spotify disabled, skipping.")
+        # Cinematic
+        screen = BriefingScreen(mode.name, mode.apps_to_launch)
+        screen.show()
+        time.sleep(1.0)
 
-            self.state.state = WorkmodeState.ACTIVE
-            self.tray.update_icon(WorkmodeState.ACTIVE)
-            self.notifier.notify_activation()
-            logger.info("✅ Workspace fully activated!")
+        # Launch + arrange
+        self.launcher.launch_apps(mode.apps_to_launch)
+        time.sleep(2.5)
+        self.arranger.arrange(mode.layout)
 
-        except Exception as exc:
-            logger.error(f"Activation failed: {exc}", exc_info=True)
+        # Spotify
+        if "spotify" in mode.apps_to_launch and self.config.spotify_enabled:
+            self._start_spotify(mode)
 
-        finally:
-            self.state.state = WorkmodeState.COOLDOWN
-            self.tray.update_icon(WorkmodeState.COOLDOWN)
+        self.state.state = WorkmodeState.ACTIVE
+        self.state.last_activation_time = time.time()
+        self.hud.set_speech_text(RESPONSES["workspace_ready"])
+        self.speaker.speak(RESPONSES["workspace_ready"])
+        logger.info(f"Workspace active — mode: {mode.name}, source: {source}")
 
-    # ── Updates ──────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────
+    # DEACTIVATION
+    # ─────────────────────────────────────────────
 
-    def check_updates_and_notify(self) -> None:
-        """Check GitHub for a newer release and toast if available."""
-        logger.info("Checking for updates…")
-        available, version, url = self.updater.check_for_updates()
-        if available:
-            logger.info(f"Update available: v{version}")
-            self.notifier.notify_update_available(version)
-        else:
-            logger.info("Already on latest version.")
+    def _on_absence_detected(self) -> None:
+        if self.state.state != WorkmodeState.ACTIVE:
+            return
+        logger.info("Departure detected.")
+        self.hud.set_speech_text(RESPONSES["departure_detected"])
+        self.speaker.speak(RESPONSES["departure_detected"])
+        self._deactivate_workspace("absence")
 
-    # ── Diagnostics ──────────────────────────────────────────────────
+    def _deactivate_workspace(self, source: str = "voice") -> None:
+        if self.state.state in (WorkmodeState.IDLE, WorkmodeState.DEACTIVATING):
+            return
 
-    def _run_diagnostics(self) -> None:
-        logger.info("═══ DIAGNOSTIC MODE ═══")
-        logger.info("Running processes:")
-        for name in get_running_processes():
-            logger.debug(f"  • {name}")
-        logger.info("Visible windows:")
-        for title in get_all_window_titles():
-            logger.debug(f"  • {title}")
-        logger.info("ARP table:")
-        try:
-            r = subprocess.run(
-                ["arp", "-a"], capture_output=True, text=True, timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            for line in r.stdout.strip().splitlines():
-                logger.debug(f"  {line}")
-        except Exception as exc:
-            logger.warning(f"  ARP failed: {exc}")
-        logger.info("═══ END DIAGNOSTICS ═══")
+        self.state.state = WorkmodeState.DEACTIVATING
+        threading.Thread(
+            target=self._run_deactivation, args=(source,),
+            daemon=True, name="DeactivationThread",
+        ).start()
 
-    # ── Start ────────────────────────────────────────────────────────
+    def _run_deactivation(self, source: str) -> None:
+        self.speaker.speak(RESPONSES["deactivating"], blocking=True)
 
-    def start(self) -> None:
-        """Entry point — wizard gate → services → tray icon (blocking)."""
-        logger.info(f"{'=' * 50}")
-        logger.info(f" {__app_name__} v{__version__} starting up")
-        logger.info(f"{'=' * 50}")
-
-        # Single instance
-        if not ensure_single_instance():
-            logger.error("Another instance is already running. Exiting.")
-            sys.exit(1)
-
-        # Admin check
-        if not is_admin():
-            logger.warning(
-                "Not running as Administrator — global hotkeys may be limited."
-            )
-
-        # First-run wizard
-        if not self.config.setup_complete:
-            logger.info("First run — launching setup wizard…")
-            wizard = SetupWizard(
-                self.config,
-                on_complete=lambda: self.activate("wizard_test"),
-            )
-            completed = wizard.run()
-            if not completed:
-                logger.info("Wizard cancelled. Exiting.")
-                sys.exit(0)
-            # Reload config in case wizard saved new values
-            self.config = Config.load()
-
-        # Post-setup
-        if self.config.launch_on_startup:
-            self.startup_mgr.enable()
-        else:
-            self.startup_mgr.disable()
-
-        # Diagnostics
-        if self.config.diagnostic_mode:
-            self._run_diagnostics()
-
-        # Start services
-        self.watchdog.start()
-
-        if self.config.detection_method in ("ping", "arp"):
-            self.wifi_detector.start()
-            self.watchdog.register(
-                "WiFiDetector", self.wifi_detector._thread,
-                self.wifi_detector.restart,
-            )
-        elif self._bt_detector:
-            self._bt_detector.start()
-            self.watchdog.register(
-                "BluetoothDetector", self._bt_detector._thread,
-                self._bt_detector.restart,
-            )
-
-        self.manual_trigger.start()
-
-        # Update check
-        if self.config.auto_check_updates:
-            threading.Thread(
-                target=self.check_updates_and_notify,
-                daemon=True, name="UpdaterThread",
-            ).start()
+        mode = self.mode_ctrl.get_current_mode()
+        self.deactivator.close_all(mode.apps_to_launch)
 
         self.state.state = WorkmodeState.IDLE
-        logger.info(
-            f"📡 Monitoring for phone [{self.config.phone_ip}] "
-            f"via {self.config.detection_method.upper()}"
+        self.state.current_mode_name = "Standby"
+        self.hud.set_speech_text(RESPONSES["deactivated"])
+        self.speaker.speak(RESPONSES["deactivated"])
+        logger.info(f"Workspace deactivated (source: {source}).")
+
+        # Re-arm absence detector
+        self.absence_det.start()
+
+    # ─────────────────────────────────────────────
+    # MISC
+    # ─────────────────────────────────────────────
+
+    def _pause(self) -> None:
+        self.state.state = WorkmodeState.PAUSED
+        self.speaker.speak(RESPONSES["cmd_pause"])
+        self.hud.set_speech_text(RESPONSES["cmd_pause"])
+
+    def _resume(self) -> None:
+        self.state.state = WorkmodeState.IDLE
+        self.speaker.speak(RESPONSES["cmd_resume"])
+        self.hud.set_speech_text(RESPONSES["cmd_resume"])
+
+    def _report_status(self) -> None:
+        status = (
+            f"Current mode is {self.state.current_mode_name}. "
+            f"System is {self.state.state.name.lower()}. "
+            f"Phone is {'detected' if self.state.phone_present else 'not detected'}."
         )
-        logger.info(f"⌨️  Hotkey: {self.config.hotkey}")
-        logger.info("System tray icon active. Right-click for options.")
+        self.speaker.speak(status)
+        self.hud.set_speech_text(status)
 
-        # Blocking — runs tray event loop
-        self.tray.run()
+    def _play_chime(self) -> None:
+        try:
+            winsound.PlaySound(
+                str(self._chime_path),
+                winsound.SND_FILENAME | winsound.SND_ASYNC,
+            )
+        except Exception:
+            pass
 
-        # After tray exits
-        logger.info("Shutting down…")
-        self.wifi_detector.stop()
-        self.manual_trigger.stop()
-        if self._bt_detector:
-            self._bt_detector.stop()
-        logger.info("Goodbye! 👋")
+    def _start_spotify(self, mode) -> None:
+        try:
+            import spotipy
+            from spotipy.oauth2 import SpotifyOAuth
+
+            auth = SpotifyOAuth(
+                client_id=self.config.spotify_client_id,
+                client_secret=self.config.spotify_client_secret,
+                redirect_uri=self.config.spotify_redirect_uri,
+                scope="user-modify-playback-state user-read-playback-state",
+            )
+            sp = spotipy.Spotify(auth_manager=auth)
+            devices = sp.devices().get("devices", [])
+            playlist = (
+                mode.spotify_playlist_uri
+                or getattr(self.config, f"{mode.name.lower().replace(' ', '_')}_playlist", "")
+            )
+            if devices:
+                device_id = devices[0]["id"]
+                if playlist:
+                    sp.start_playback(device_id=device_id, context_uri=playlist)
+                else:
+                    sp.start_playback(device_id=device_id)
+                sp.volume(self.config.spotify_volume, device_id=device_id)
+                logger.info("Spotify playback started.")
+        except Exception as exc:
+            self.speaker.speak(RESPONSES["error_spotify"])
+            logger.error(f"Spotify error: {exc}")
 
 
 def main() -> None:
-    """Module entry point."""
-    # DPI awareness for crisp UI
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
         pass
-
-    JarvisWorkMode().start()
+    JarvisV3().start()
 
 
 if __name__ == "__main__":

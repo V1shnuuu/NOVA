@@ -1,6 +1,7 @@
 """
-JARVIS WorkMode — Configuration Hub (v2)
-Persistent JSON-backed dataclass stored in %%APPDATA%%\\JarvisWorkMode.
+JARVIS WorkMode v3 — Configuration Hub
+JSON-persistent dataclass stored in %%APPDATA%%\\JarvisWorkMode.
+Expanded for voice, HUD, time-based modes, and absence detection.
 """
 
 from __future__ import annotations
@@ -19,9 +20,7 @@ CONFIG_FILE: Path = CONFIG_DIR / "config.json"
 
 @dataclass
 class Config:
-    """Central configuration — every field is JSON-serialisable."""
-
-    # ── Setup state ──────────────────────────────────────────────────
+    # ── Setup ────────────────────────────────────────────────────────
     first_run: bool = True
     setup_complete: bool = False
 
@@ -33,7 +32,22 @@ class Config:
     ping_timeout_ms: int = 1000
     confirmed_detections_required: int = 2
     presence_window: int = 3
-    phone_bluetooth_name: str = ""
+
+    # ── Absence detection ────────────────────────────────────────────
+    enable_deactivation: bool = True
+    absence_confirmations_required: int = 4
+
+    # ── Voice ────────────────────────────────────────────────────────
+    wake_word: str = "jarvis"
+    voice_rate: int = 175
+    voice_volume: float = 0.95
+    voice_command_timeout: float = 5.0
+
+    # ── HUD ──────────────────────────────────────────────────────────
+    hud_width: int = 400
+    hud_height: int = 240
+    hud_opacity: float = 0.92
+    hud_position: str = "bottom-right"
 
     # ── Hotkey ───────────────────────────────────────────────────────
     hotkey: str = "ctrl+alt+w"
@@ -53,42 +67,32 @@ class Config:
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
     spotify_redirect_uri: str = "http://localhost:8888/callback"
-    spotify_playlist_uri: str = ""
     spotify_volume: int = 40
 
-    # ── Window layout (fractions of screen) ──────────────────────────
-    layout: dict = field(default_factory=lambda: {
-        "chatgpt": {"x": 0.0, "y": 0.0, "w": 0.33, "h": 1.0},
-        "claude":  {"x": 0.33, "y": 0.0, "w": 0.34, "h": 1.0},
-        "spotify": {"x": 0.67, "y": 0.0, "w": 0.33, "h": 1.0},
-    })
-    monitor_index: int = 0
-    window_find_timeout: int = 15
+    # ── Mode playlists ───────────────────────────────────────────────
+    deep_work_playlist: str = ""
+    afternoon_playlist: str = ""
+    evening_playlist: str = ""
 
     # ── System ───────────────────────────────────────────────────────
     launch_on_startup: bool = True
-    minimize_to_tray_on_close: bool = True
-    show_activation_notifications: bool = True
+    show_notifications: bool = True
     diagnostic_mode: bool = False
     log_level: str = "INFO"
 
     # ── Auto-updater ─────────────────────────────────────────────────
     auto_check_updates: bool = True
-    last_update_check: str = ""
 
     # ── Persistence ──────────────────────────────────────────────────
 
     def save(self) -> None:
-        """Serialise to ``%APPDATA%\\JarvisWorkMode\\config.json``."""
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(
-            json.dumps(asdict(self), indent=2),
-            encoding="utf-8",
+            json.dumps(asdict(self), indent=2), encoding="utf-8",
         )
 
     @classmethod
     def load(cls) -> Config:
-        """Load from disk, falling back to defaults on any error."""
         if not CONFIG_FILE.exists():
             return cls()
         try:

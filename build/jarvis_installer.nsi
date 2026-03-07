@@ -1,73 +1,49 @@
-; JARVIS WorkMode Installer Script
-; Build with: makensis jarvis_installer.nsi
-; Prerequisites: NSIS installed from https://nsis.sourceforge.io
+; JARVIS WorkMode v3 Installer
+; Build: makensis jarvis_installer.nsi
 
-!define APP_NAME "JARVIS WorkMode"
-!define APP_VERSION "1.0.0"
-!define APP_PUBLISHER "V1shnuuu"
-!define APP_EXE "JarvisWorkMode.exe"
+!define APP_NAME    "JARVIS WorkMode"
+!define APP_VERSION "3.0.0"
+!define APP_EXE     "JarvisWorkMode.exe"
 !define INSTALL_DIR "$PROGRAMFILES64\JarvisWorkMode"
-!define UNINSTALLER "Uninstall.exe"
 
 Name "${APP_NAME} ${APP_VERSION}"
 OutFile "JarvisWorkMode_Setup_v${APP_VERSION}.exe"
 InstallDir "${INSTALL_DIR}"
-InstallDirRegKey HKCU "Software\JarvisWorkMode" ""
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 
-; ── Modern UI ────────────────────────────────────────────────────────
 !include "MUI2.nsh"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
-!define MUI_FINISHPAGE_RUN_TEXT "Launch JARVIS WorkMode now"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch JARVIS WorkMode"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
-
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
-
 !insertmacro MUI_LANGUAGE "English"
 
-; ── Install Section ──────────────────────────────────────────────────
-Section "Main Application" SecMain
+Section "Main"
   SetOutPath "$INSTDIR"
   File "..\dist\${APP_EXE}"
-
-  ; Start Menu & Desktop shortcuts
-  CreateDirectory "$SMPROGRAMS\${APP_NAME}"
-  CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
   CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
-
-  ; Add/Remove Programs registry
+  CreateShortcut "$SMPROGRAMS\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\JarvisWorkMode" \
               "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\JarvisWorkMode" \
-              "UninstallString" "$INSTDIR\${UNINSTALLER}"
+              "UninstallString" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\JarvisWorkMode" \
               "DisplayVersion" "${APP_VERSION}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\JarvisWorkMode" \
-              "Publisher" "${APP_PUBLISHER}"
-  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\JarvisWorkMode" \
-              "EstimatedSize" 45000
-
-  WriteUninstaller "$INSTDIR\${UNINSTALLER}"
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
 SectionEnd
 
-; ── Uninstall Section ────────────────────────────────────────────────
 Section "Uninstall"
   Delete "$INSTDIR\${APP_EXE}"
-  Delete "$INSTDIR\${UNINSTALLER}"
+  Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
-  RMDir "$SMPROGRAMS\${APP_NAME}"
   Delete "$DESKTOP\${APP_NAME}.lnk"
-
-  ; Remove startup entry
+  Delete "$SMPROGRAMS\${APP_NAME}.lnk"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "JarvisWorkMode"
-
-  ; Remove from Add/Remove Programs
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\JarvisWorkMode"
 SectionEnd

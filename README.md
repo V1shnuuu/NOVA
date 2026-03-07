@@ -1,15 +1,13 @@
-# 🤖 JARVIS WorkMode
+# 🤖 JARVIS WorkMode v3 — Voice-First HUD System
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![Windows 11](https://img.shields.io/badge/Windows-11-0078D6.svg)](https://www.microsoft.com/windows)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-V1shnuuu%2FNOVA-181717.svg)](https://github.com/V1shnuuu/NOVA)
 
-An intelligent, automated desktop productivity assistant for **Windows 11** — inspired by JARVIS from Iron Man.
+A **voice-driven, AI-style desktop intelligence system** for Windows 11 — inspired by JARVIS from Iron Man.
 
-JARVIS detects when you arrive at your desk (via phone presence on WiFi or a keyboard shortcut), then automatically launches ChatGPT, Claude, and Spotify, and tiles every window into a clean productivity layout. It lives in the system tray, ships as a single `.exe`, and includes a first-run setup wizard.
-
-![Demo](docs/demo.gif)
+Not a tray icon app. Not a background script. A **living HUD overlay** that hovers above your desktop, listens for your voice, speaks back, and auto-manages your workspace.
 
 ---
 
@@ -17,141 +15,75 @@ JARVIS detects when you arrive at your desk (via phone presence on WiFi or a key
 
 | Feature | Description |
 |---|---|
-| **Phone Presence Detection** | ARP/ping/Bluetooth detection of your phone on WiFi |
-| **Global Hotkey** | `CTRL+ALT+W` to manually activate |
-| **Setup Wizard** | Dark-themed 5-page wizard — zero config file editing |
-| **System Tray** | Colour-coded icon with full right-click menu |
-| **Browser Launcher** | Opens ChatGPT & Claude in separate windows |
-| **Spotify Integration** | Launches Spotify + starts playlist + sets volume |
-| **Window Tiling** | 3-column auto-layout via pygetwindow + win32gui |
-| **Cooldown** | Prevents repeated triggers (configurable) |
-| **Auto-Updater** | Checks GitHub Releases for new versions |
-| **Windows Startup** | Registers in startup via the registry |
-| **Toast Notifications** | Native Windows 11 toasts on activation |
-| **Watchdog** | Auto-restarts dead background threads |
-| **Diagnostic Mode** | Dumps processes, windows, ARP table |
-| **Single-File EXE** | PyInstaller build — no Python needed |
-| **NSIS Installer** | Professional setup.exe with shortcuts + uninstaller |
+| 🎤 **Voice Control** | Say "JARVIS" → hear a chime → give commands (offline via vosk) |
+| 🖥️ **HUD Overlay** | Transparent always-on-top panel with hex grid, scan line, clock |
+| 🎬 **Briefing Cinematic** | Full-screen activation animation with mode name + app list |
+| ⏰ **Time-Based Modes** | Deep Work (morning) ∙ Afternoon (research) ∙ Evening (creative) |
+| 📱 **Phone Detection** | ARP/ping WiFi scanner triggers workspace automatically |
+| 👋 **Auto-Deactivation** | Detects departure → speaks farewell → closes apps |
+| 🔊 **JARVIS Voice** | pyttsx3 offline TTS with JARVIS personality |
+| 🎵 **Spotify** | Auto-plays playlists per mode, sets volume |
+| ⌨️ **Hotkey** | CTRL+ALT+W as fallback trigger |
+| 🪟 **Window Tiling** | Arranges apps per mode layout via pygetwindow + win32gui |
+| 📦 **Single-File EXE** | PyInstaller build with all assets bundled |
 
 ---
 
-## 🚀 Quick Start (3 Steps)
+## 🗣️ Voice Commands
 
-1. **Download** `JarvisWorkMode_Setup_v1.0.0.exe` from [Releases](https://github.com/V1shnuuu/NOVA/releases)
-2. **Install** and launch — the setup wizard guides you through everything
-3. **Done** — JARVIS monitors for your phone and activates your workspace automatically
+| Say | Action |
+|---|---|
+| "JARVIS" | Wake word — activates listening |
+| "Activate" / "Start" | Launch workspace |
+| "Deactivate" / "Shut down" | Close workspace |
+| "Pause" | Pause monitoring |
+| "Resume" | Resume monitoring |
+| "Status" / "Report" | Speak current system state |
+| "Spotify" / "Music" | Open Spotify |
+| "Close all" | Close all workspace apps |
 
 ---
 
-## 🔧 Build from Source
+## ⏰ Workspace Modes
 
-### Prerequisites
+| Mode | Time | Layout |
+|---|---|---|
+| **Deep Work** | 05:00 – 11:59 | Claude 60% ∙ ChatGPT 40% ∙ Spotify minimized |
+| **Afternoon** | 12:00 – 17:59 | ChatGPT ∙ Claude ∙ Spotify (3 equal columns) |
+| **Evening** | 18:00 – 04:59 | Claude 70% ∙ Spotify 30% ∙ no ChatGPT |
 
-- **Windows 11** (or 10)
-- **Python 3.11+** — [python.org/downloads](https://www.python.org/downloads/)
-- **Spotify Desktop** (optional) — [spotify.com/download](https://www.spotify.com/download)
+---
 
-### Setup
+## 🚀 Quick Start
+
+### From Source
 
 ```powershell
 git clone https://github.com/V1shnuuu/NOVA.git
 cd NOVA
-
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
+```
 
-# pywin32 post-install
-python venv\Scripts\pywin32_postinstall.py -install
+### Download Vosk Model (40MB, one-time)
+
+```powershell
+# Download from: https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+# Extract to: assets/vosk-model/
 ```
 
 ### Run
 
 ```powershell
-# As Administrator (recommended for global hotkeys)
 python main.py
-
-# Or silent (no console):
-pythonw.exe main.py
 ```
 
 ### Build EXE
 
 ```powershell
 python build\build_exe.py
-# Output: dist\JarvisWorkMode.exe
 ```
-
-### Build Installer
-
-Install [NSIS](https://nsis.sourceforge.io) first, then:
-
-```powershell
-python build\build_installer.py
-# Output: build\JarvisWorkMode_Setup_v1.0.0.exe
-```
-
----
-
-## 🎵 Spotify Setup
-
-1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
-2. Click **Create App** (free)
-3. Set **Redirect URI** to `http://localhost:8888/callback`
-4. Copy **Client ID** and **Client Secret** into the wizard or settings
-5. To get a playlist URI: right-click a playlist in Spotify → **Share** → **Copy Spotify URI**
-
-> On first run, a browser tab opens for OAuth. After authorizing, a `.spotify_cache` token file is saved in `%APPDATA%\JarvisWorkMode` and you won't be asked again.
-
----
-
-## 📱 Finding Your Phone's Network Info
-
-| Device | MAC Address |
-|---|---|
-| **Android** | Settings → About Phone → Status → Wi-Fi MAC Address |
-| **iPhone** | Settings → Wi-Fi → tap ⓘ → Wi-Fi Address |
-
-**IP Address**: Check your router's admin page (usually `192.168.1.1`) or run `arp -a` in PowerShell while your phone is connected.
-
----
-
-## 🖥️ Window Layout
-
-Default 3-column layout (customizable in Settings):
-
-```
-┌──────────────┬──────────────┬──────────────┐
-│   ChatGPT    │    Claude    │   Spotify    │
-│    (33%)     │    (34%)     │    (33%)     │
-└──────────────┴──────────────┴──────────────┘
-```
-
----
-
-## ⌨️ Usage
-
-| Action | How |
-|---|---|
-| Manual activate | `CTRL+ALT+W` or tray → "Activate Workspace Now" |
-| Pause monitoring | Tray → "Pause Monitoring" |
-| Open settings | Tray → "Settings" |
-| View logs | Tray → "View Logs" (opens `%APPDATA%\JarvisWorkMode\logs`) |
-| Exit | Tray → "Exit" |
-
----
-
-## 🐛 Troubleshooting
-
-| Issue | Fix |
-|---|---|
-| Hotkey doesn't work | Run as Administrator |
-| Phone not detected (ping) | Switch to ARP method in settings |
-| Phone not detected (ARP) | Ensure phone is on same WiFi; try pinging it first |
-| Spotify won't play | Verify Spotify is open + logged in; check API credentials |
-| Windows not arranging | Enable diagnostic mode to see all window titles |
-| Multiple monitors | Uses primary monitor; `monitor_index` config planned |
-| "Already running" error | Kill existing `JarvisWorkMode.exe` in Task Manager |
 
 ---
 
@@ -159,51 +91,47 @@ Default 3-column layout (customizable in Settings):
 
 ```
 jarvis_workmode/
-├── main.py                     # Orchestrator + entry point
-├── config.py                   # JSON-persistent dataclass
-├── app_state.py                # Thread-safe state machine
-├── version.py                  # Version metadata
-├── requirements.txt
-├── ui/
-│   ├── tray_icon.py            # pystray system tray
-│   ├── wizard.py               # 5-page setup wizard
-│   ├── settings_window.py      # Tabbed settings panel
-│   └── notification.py         # Toast notifications
-├── triggers/
-│   ├── wifi_presence.py        # ARP/ping detection
-│   ├── bluetooth_presence.py   # BLE detection (optional)
-│   └── manual_trigger.py       # CTRL+ALT+W hotkey
-├── automation/
-│   ├── workspace_launcher.py   # Opens browsers + Spotify
-│   ├── window_manager.py       # Window tiling engine
-│   └── spotify_controller.py   # Spotify Web API
+├── main.py                        # v3 orchestrator
+├── config.py                      # JSON-persistent config
+├── app_state.py                   # Thread-safe state machine
+├── version.py
+├── voice/
+│   ├── wake_word.py               # Vosk wake word detector
+│   ├── recognizer.py              # Vosk command recognizer
+│   ├── speaker.py                 # pyttsx3 TTS
+│   ├── command_parser.py          # Keyword → Command enum
+│   ├── responses.py               # All JARVIS spoken lines
+│   └── chime.py                   # Programmatic chime generator
+├── hud/
+│   ├── hud_window.py              # Transparent HUD overlay
+│   ├── voice_ring.py              # Pulsing listening animation
+│   └── briefing_screen.py         # Full-screen activation cinematic
+├── modes/
+│   ├── base_mode.py               # Abstract mode + WindowLayout
+│   ├── mode_controller.py         # Time-based mode selection
+│   ├── deep_work.py               # Morning focus mode
+│   ├── afternoon.py               # Research mode
+│   └── evening.py                 # Creative/wind-down mode
+├── workspace/
+│   ├── launcher.py                # App launcher
+│   ├── window_arranger.py         # Window tiling engine
+│   ├── deactivator.py             # Graceful app closer
+│   └── app_profiles.py            # Window title patterns
+├── presence/
+│   ├── wifi_monitor.py            # ARP/ping scanner
+│   └── absence_detector.py        # Departure trigger
 ├── services/
-│   ├── startup_manager.py      # Windows startup registry
-│   ├── updater.py              # GitHub auto-update checker
-│   └── watchdog.py             # Thread health monitor
-├── build/
-│   ├── build_exe.py            # PyInstaller script
-│   ├── build_installer.py      # Full build pipeline
-│   ├── jarvis_installer.nsi    # NSIS installer script
-│   └── version_info.txt        # EXE metadata
-└── tests/
-    ├── test_config.py
-    ├── test_wifi_detection.py
-    └── test_window_manager.py
+│   ├── startup_manager.py         # Windows startup registry
+│   └── updater.py                 # GitHub update checker
+├── utils/
+│   ├── logger.py                  # Rotating file + color console
+│   └── helpers.py                 # Retry, admin, mutex
+└── build/
+    ├── build_exe.py               # PyInstaller build
+    ├── build_installer.py         # Full build pipeline
+    ├── jarvis_installer.nsi       # NSIS installer
+    └── version_info.txt           # EXE metadata
 ```
-
----
-
-## 🧩 Future Extensions
-
-- **System Tray Icon** with animated states
-- **Voice Greeting** via `pyttsx3`
-- **Deactivation Mode** — close apps when phone leaves WiFi
-- **Web Dashboard** — Flask localhost status page
-- **Multi-Profile** — different layouts for day/night
-- **Camera Detection** — OpenCV face detection trigger
-- **Dynamic Playlists** — pick by time of day
-- **GitHub Auto-Pull** — pull latest code on activation
 
 ---
 
