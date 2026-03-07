@@ -1,8 +1,29 @@
+# Core
 pygetwindow==0.0.9
 pyautogui==0.9.54
 keyboard==0.13.5
 psutil==5.9.8
-spotipy==2.23.0
-colorlog==6.8.2
-bleak==0.21.1
 pywin32==306
+
+# Spotify
+spotipy==2.23.0
+
+# UI
+pystray==0.19.5
+Pillow==10.3.0
+win10toast==0.9
+
+# Logging
+colorlog==6.8.2
+
+# Config + paths
+platformdirs==4.2.2
+
+# Updater
+packaging==24.0
+
+# Optional: Bluetooth
+bleak==0.21.1
+
+# Build tools (not imported at runtime)
+pyinstaller==6.6.0

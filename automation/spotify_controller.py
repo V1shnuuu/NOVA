@@ -1,13 +1,23 @@
 """
-JARVIS WorkMode — Spotify Playback Controller
-Authenticates via Spotipy and starts a playlist on the active device.
+JARVIS WorkMode — Spotify Playback Controller (v2)
+Authenticates via Spotipy OAuth and controls playback.
+Token cache stored in %%APPDATA%%\\JarvisWorkMode\\.spotify_cache.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import platformdirs
+
 from utils.logger import get_logger
 
 logger = get_logger("jarvis.automation.spotify")
+
+CACHE_PATH = (
+    Path(platformdirs.user_data_dir("JarvisWorkMode", "JarvisWorkMode"))
+    / ".spotify_cache"
+)
 
 try:
     import spotipy
@@ -15,93 +25,68 @@ try:
     SPOTIPY_AVAILABLE = True
 except ImportError:
     SPOTIPY_AVAILABLE = False
-    logger.warning(
-        "spotipy is not installed — Spotify control disabled. "
-        "Install with: pip install spotipy"
-    )
+    logger.warning("spotipy not installed — Spotify control disabled.")
 
 
 class SpotifyController:
-    """Manages Spotify playback via the Spotify Web API (Spotipy).
-
-    On first run the OAuth flow opens a browser tab for the user to
-    authorise the app. A ``.cache`` token file is saved so subsequent
-    runs authenticate silently.
-    """
+    """Manages Spotify playback via the Web API."""
 
     def __init__(self, config) -> None:
         self.config = config
-        self.sp: spotipy.Spotify | None = None  # type: ignore[name-defined]
+        self.sp: spotipy.Spotify | None = None
 
-        if not config.SPOTIFY_ENABLED:
-            logger.info("Spotify control is disabled in config.")
+        if not config.spotify_enabled:
+            logger.info("Spotify control disabled in config.")
             return
-
         if not SPOTIPY_AVAILABLE:
             return
-
         self._authenticate()
 
-    # ── Public ───────────────────────────────────────────────────────
-
     def start_playlist(self) -> None:
-        """Begin playback of the configured playlist on the first active device."""
         if self.sp is None:
-            logger.info("Spotify client not available — skipping playback.")
+            logger.info("Spotify client unavailable — skipping.")
             return
-
         try:
             devices = self.sp.devices()
             if not devices or not devices.get("devices"):
-                logger.warning(
-                    "No active Spotify device found. "
-                    "Make sure Spotify desktop is open and logged in."
-                )
+                logger.warning("No active Spotify device found.")
                 return
 
             device_id: str = devices["devices"][0]["id"]
             device_name: str = devices["devices"][0].get("name", "unknown")
-            logger.info(f"Using Spotify device: {device_name} ({device_id})")
+            logger.info(f"Using Spotify device: {device_name}")
 
-            if self.config.SPOTIFY_PLAYLIST_URI:
+            if self.config.spotify_playlist_uri:
                 self.sp.start_playback(
                     device_id=device_id,
-                    context_uri=self.config.SPOTIFY_PLAYLIST_URI,
+                    context_uri=self.config.spotify_playlist_uri,
                 )
-                logger.info(
-                    f"Playback started: {self.config.SPOTIFY_PLAYLIST_URI}"
-                )
+                logger.info(f"Playing: {self.config.spotify_playlist_uri}")
             else:
-                # Resume whatever was playing last
                 self.sp.start_playback(device_id=device_id)
-                logger.info("Resumed Spotify playback (no playlist URI set).")
+                logger.info("Resumed Spotify playback.")
 
-            self.sp.volume(self.config.SPOTIFY_VOLUME, device_id=device_id)
-            logger.info(f"Spotify volume set to {self.config.SPOTIFY_VOLUME}%.")
-
+            self.sp.volume(self.config.spotify_volume, device_id=device_id)
+            logger.info(f"Volume set to {self.config.spotify_volume}%.")
         except Exception as exc:
             logger.error(f"Spotify playback error: {exc}")
 
-    # ── Private ──────────────────────────────────────────────────────
-
     def _authenticate(self) -> None:
-        """Set up Spotipy OAuth and create the client."""
-        if not self.config.SPOTIFY_CLIENT_ID:
-            logger.warning(
-                "Spotify client ID not configured — Spotify control disabled."
-            )
+        if not self.config.spotify_client_id:
+            logger.warning("Spotify client ID not set — skipping auth.")
             return
-
         try:
+            CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
             auth_manager = SpotifyOAuth(
-                client_id=self.config.SPOTIFY_CLIENT_ID,
-                client_secret=self.config.SPOTIFY_CLIENT_SECRET,
-                redirect_uri=self.config.SPOTIFY_REDIRECT_URI,
+                client_id=self.config.spotify_client_id,
+                client_secret=self.config.spotify_client_secret,
+                redirect_uri=self.config.spotify_redirect_uri,
                 scope="user-read-playback-state user-modify-playback-state",
                 open_browser=True,
+                cache_path=str(CACHE_PATH),
             )
             self.sp = spotipy.Spotify(auth_manager=auth_manager)
-            logger.info("Spotify authenticated successfully.")
+            logger.info("Spotify authenticated.")
         except Exception as exc:
-            logger.error(f"Spotify authentication failed: {exc}")
+            logger.error(f"Spotify auth failed: {exc}")
             self.sp = None

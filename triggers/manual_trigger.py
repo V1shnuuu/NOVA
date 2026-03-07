@@ -1,5 +1,5 @@
 """
-JARVIS WorkMode — Manual Trigger
+JARVIS WorkMode — Manual Trigger (v2)
 Global hotkey listener (default CTRL+ALT+W).
 """
 
@@ -15,11 +15,7 @@ logger = get_logger("jarvis.triggers.manual")
 
 
 class ManualTrigger:
-    """Registers a global hotkey that fires a callback on press.
-
-    Requires the ``keyboard`` library, which may need Administrator
-    privileges on Windows for system-wide hotkeys.
-    """
+    """Registers a global hotkey that fires a callback on press."""
 
     def __init__(self, hotkey: str, callback: Callable[[], None]) -> None:
         self.hotkey = hotkey
@@ -46,6 +42,5 @@ class ManualTrigger:
                 logger.warning(f"Could not remove hotkey: {exc}")
 
     def _handle(self) -> None:
-        """Internal handler invoked by the keyboard library."""
         logger.info(f"Hotkey [{self.hotkey}] pressed!")
-        self.callback("hotkey")
+        self.callback()

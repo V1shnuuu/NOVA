@@ -1,5 +1,5 @@
 """
-JARVIS WorkMode — Workspace Launcher
+JARVIS WorkMode — Workspace Launcher (v2)
 Opens browser tabs (ChatGPT, Claude) and launches Spotify.
 """
 
@@ -32,26 +32,21 @@ class WorkspaceLauncher:
         """Launch all configured applications and return results."""
         results: list[LaunchResult] = []
         results.extend(self._open_browser_tabs())
-        time.sleep(self.config.BROWSER_SETTLE_DELAY)
+        time.sleep(self.config.launch_delay_seconds)
         results.append(self._launch_spotify())
         return results
 
-    # ── Browser ──────────────────────────────────────────────────────
-
     def _open_browser_tabs(self) -> list[LaunchResult]:
-        """Open ChatGPT and Claude in the default (or configured) browser."""
         results: list[LaunchResult] = []
-
         urls = [
-            ("ChatGPT", self.config.CHATGPT_URL),
-            ("Claude", self.config.CLAUDE_URL),
+            ("ChatGPT", self.config.chatgpt_url),
+            ("Claude", self.config.claude_url),
         ]
-
         for name, url in urls:
             try:
-                if self.config.BROWSER_PATH:
+                if self.config.browser_executable:
                     subprocess.Popen(
-                        [self.config.BROWSER_PATH, "--new-window", url],
+                        [self.config.browser_executable, "--new-window", url],
                         creationflags=subprocess.CREATE_NO_WINDOW,
                     )
                 else:
@@ -61,37 +56,31 @@ class WorkspaceLauncher:
             except Exception as exc:
                 logger.error(f"Failed to open {name}: {exc}")
                 results.append(LaunchResult(name, False, str(exc)))
-
-            time.sleep(self.config.BROWSER_TAB_DELAY)
-
+            time.sleep(self.config.launch_delay_seconds)
         return results
 
-    # ── Spotify ──────────────────────────────────────────────────────
-
     def _launch_spotify(self) -> LaunchResult:
-        """Launch the Spotify desktop app if it is not already running."""
-        if not self.config.SPOTIFY_ENABLED:
-            msg = "Spotify is disabled in config — skipping."
+        if not self.config.spotify_enabled:
+            msg = "Spotify disabled — skipping."
             logger.info(msg)
             return LaunchResult("Spotify", True, msg)
 
         if self._is_spotify_running():
-            msg = "Spotify is already running."
+            msg = "Spotify already running."
             logger.info(msg)
             return LaunchResult("Spotify", True, msg)
 
         try:
-            # Try common install paths on Windows
+            exe = self.config.spotify_executable or "spotify.exe"
             subprocess.Popen(
-                ["spotify.exe"],
-                shell=True,
+                [exe], shell=True,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            logger.info("Spotify launched. Waiting for it to load…")
-            time.sleep(self.config.SPOTIFY_LAUNCH_DELAY)
+            logger.info("Spotify launched — waiting for it to load…")
+            time.sleep(self.config.launch_delay_seconds * 2)
             return LaunchResult("Spotify", True, "Launched")
         except FileNotFoundError:
-            msg = "Spotify executable not found — is it installed?"
+            msg = "Spotify executable not found."
             logger.warning(msg)
             return LaunchResult("Spotify", False, msg)
         except Exception as exc:
@@ -101,9 +90,7 @@ class WorkspaceLauncher:
 
     @staticmethod
     def _is_spotify_running() -> bool:
-        """Return ``True`` if a Spotify process is already alive."""
         import psutil
-
         for proc in psutil.process_iter(["name"]):
             try:
                 if "spotify" in (proc.info["name"] or "").lower():

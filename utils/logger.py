@@ -1,36 +1,41 @@
 """
-JARVIS WorkMode — Logging Utility
-Colored console output + file logging with timestamps.
+JARVIS WorkMode — Production Logging (v2)
+Rotating file logs in %%APPDATA%% + colored console output.
 """
 
+from __future__ import annotations
+
 import logging
+import logging.handlers
 from pathlib import Path
 
 import colorlog
+import platformdirs
+
+LOG_DIR: Path = (
+    Path(platformdirs.user_data_dir("JarvisWorkMode", "JarvisWorkMode")) / "logs"
+)
 
 
-def get_logger(name: str, log_file: str = "jarvis.log") -> logging.Logger:
-    """Create and return a logger with colored console + file output.
+def get_logger(name: str) -> logging.Logger:
+    """Create and return a logger with colored console + daily rotating file.
 
-    Args:
-        name: Logger name (usually the module path).
-        log_file: Path to the log file.
-
-    Returns:
-        Configured ``logging.Logger`` instance.
+    Logs are stored in ``%APPDATA%\\JarvisWorkMode\\logs\\jarvis.log`` and
+    rotate at midnight, keeping the last 7 days.
     """
     logger = logging.getLogger(name)
-
-    # Avoid adding duplicate handlers if called more than once
     if logger.handlers:
         return logger
 
     logger.setLevel(logging.DEBUG)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── Console handler (colored) ────────────────────────────────────
-    console_handler = colorlog.StreamHandler()
-    console_handler.setFormatter(colorlog.ColoredFormatter(
-        "%(log_color)s[%(asctime)s] %(levelname)s%(reset)s — %(message)s",
+    # ── Console (colored) ────────────────────────────────────────────
+    console = colorlog.StreamHandler()
+    console.setLevel(logging.INFO)
+    console.setFormatter(colorlog.ColoredFormatter(
+        "%(log_color)s[%(asctime)s] %(levelname)-8s%(reset)s "
+        "%(name)s — %(message)s",
         datefmt="%H:%M:%S",
         log_colors={
             "DEBUG": "cyan",
@@ -40,13 +45,18 @@ def get_logger(name: str, log_file: str = "jarvis.log") -> logging.Logger:
             "CRITICAL": "bold_red",
         },
     ))
-    logger.addHandler(console_handler)
+    logger.addHandler(console)
 
-    # ── File handler ─────────────────────────────────────────────────
-    log_path = Path(log_file)
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    # ── Rotating file (midnight, keep 7 days) ────────────────────────
+    file_handler = logging.handlers.TimedRotatingFileHandler(
+        LOG_DIR / "jarvis.log",
+        when="midnight",
+        backupCount=7,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(
-        "[%(asctime)s] %(levelname)s — %(name)s — %(message)s",
+        "[%(asctime)s] %(levelname)-8s %(name)s — %(message)s",
     ))
     logger.addHandler(file_handler)
 

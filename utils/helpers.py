@@ -1,6 +1,6 @@
 """
-JARVIS WorkMode — Utility Functions
-Retry decorator, admin check, process helpers.
+JARVIS WorkMode — Utility Functions (v2)
+Retry decorator, admin check, process helpers, single-instance mutex.
 """
 
 from __future__ import annotations
@@ -12,18 +12,14 @@ from functools import wraps
 from typing import Any
 
 
+# ── Retry Decorator ──────────────────────────────────────────────────
+
 def retry(
     times: int = 3,
     delay: float = 1.0,
     exceptions: tuple[type[BaseException], ...] = (Exception,),
 ) -> Callable:
-    """Decorator: retry a function *times* on failure.
-
-    Args:
-        times: Maximum number of attempts.
-        delay: Seconds to wait between retries.
-        exceptions: Exception types that trigger a retry.
-    """
+    """Decorator: retry a function *times* on failure."""
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -38,24 +34,46 @@ def retry(
     return decorator
 
 
+# ── Admin Check ──────────────────────────────────────────────────────
+
 def is_admin() -> bool:
-    """Return ``True`` if the script is running with Windows Administrator privileges."""
+    """Return ``True`` if running with Windows Administrator privileges."""
     try:
         return ctypes.windll.shell32.IsUserAnAdmin() != 0  # type: ignore[union-attr]
     except AttributeError:
         return False
 
 
-def wait_for_process(name: str, timeout: int = 10) -> bool:
-    """Wait until a process with *name* appears in the process list.
+# ── Single Instance Mutex ────────────────────────────────────────────
 
-    Args:
-        name: Case-insensitive substring to match against process names.
-        timeout: Maximum seconds to wait.
+_MUTEX_HANDLE = None
 
-    Returns:
-        ``True`` if the process was found within the timeout.
+
+def ensure_single_instance(app_name: str = "JarvisWorkMode") -> bool:
+    """Ensure only one instance of the app is running.
+
+    Creates a Windows named mutex. Returns ``True`` if this is the first
+    instance, ``False`` if another instance already holds the mutex.
     """
+    global _MUTEX_HANDLE  # noqa: PLW0603
+    try:
+        kernel32 = ctypes.windll.kernel32  # type: ignore[union-attr]
+        _MUTEX_HANDLE = kernel32.CreateMutexW(None, True, f"Global\\{app_name}")
+        last_error = kernel32.GetLastError()
+        # ERROR_ALREADY_EXISTS = 183
+        if last_error == 183:
+            kernel32.CloseHandle(_MUTEX_HANDLE)
+            _MUTEX_HANDLE = None
+            return False
+        return True
+    except Exception:
+        return True  # Non-Windows or error — allow running
+
+
+# ── Process Helpers ──────────────────────────────────────────────────
+
+def wait_for_process(name: str, timeout: int = 10) -> bool:
+    """Wait until a process with *name* appears in the process list."""
     import psutil
 
     deadline = time.time() + timeout
@@ -71,7 +89,7 @@ def wait_for_process(name: str, timeout: int = 10) -> bool:
 
 
 def get_running_processes() -> list[str]:
-    """Return a sorted list of unique running process names (diagnostic helper)."""
+    """Return a sorted list of unique running process names."""
     import psutil
 
     names: set[str] = set()
@@ -85,7 +103,7 @@ def get_running_processes() -> list[str]:
 
 
 def get_all_window_titles() -> list[str]:
-    """Return a list of all visible window titles (diagnostic helper)."""
+    """Return a list of all visible window titles."""
     import pygetwindow as gw
 
     return [w.title for w in gw.getAllWindows() if w.title.strip()]
